@@ -1,9 +1,9 @@
 from flask import Flask, request, jsonify, send_file
 from transformers import pipeline
-import time
 import pandas as pd
 import os
 from werkzeug.utils import secure_filename
+from rag_connector import full_analysis
 
 app = Flask(__name__)
 
@@ -11,19 +11,13 @@ UPLOAD_FOLDER = "uploads"
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 print("Loading Hugging Face models...")
-print("This may take a minute on first run...")
-
-category_classifier = pipeline(
-    "zero-shot-classification",
-    model="facebook/bart-large-mnli"
-)
+category_classifier = pipeline("zero-shot-classification", model="facebook/bart-large-mnli")
 
 event_categories = [
     "systematic issue affecting multiple customers due to bank system or process error requiring remediation",
     "isolated one-time error affecting single customer that was already resolved",
     "needs investigation to determine if systematic or isolated issue"
 ]
-
 product_categories = ["deposits", "loans", "credit card", "general banking"]
 severity_categories = ["high severity", "medium severity", "low severity"]
 
@@ -76,7 +70,7 @@ def home():
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Bharat Upadhyay's Remediation AI</title>
+    <title>Bharat Upadhyay\'s Remediation AI</title>
     <style>
         * { box-sizing: border-box; margin: 0; padding: 0; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f5f5f5; color: #1a1a1a; min-height: 100vh; padding: 40px 20px; }
@@ -87,7 +81,7 @@ def home():
         .brand span { color: #7F77DD; font-size: 28px; font-weight: 800; }
         .badge { margin-left: auto; font-size: 11px; background: #EEEDFE; color: #3C3489; padding: 4px 12px; border-radius: 20px; font-weight: 500; border: 0.5px solid #7F77DD; }
         .tabs { display: flex; margin-bottom: 1.5rem; border-bottom: 0.5px solid #e0e0e0; }
-        .tab { padding: 10px 24px; font-size: 14px; cursor: pointer; border-bottom: 2px solid transparent; color: #888888; font-weight: 500; transition: all 0.15s; }
+        .tab { padding: 10px 24px; font-size: 14px; cursor: pointer; border-bottom: 2px solid transparent; color: #888888; font-weight: 500; }
         .tab.active { color: #7F77DD; border-bottom-color: #7F77DD; }
         .tab-content { display: none; }
         .tab-content.active { display: block; }
@@ -97,11 +91,12 @@ def home():
         .stat-label { font-size: 12px; color: #888888; margin-top: 2px; }
         .input-card { background: #ffffff; border: 0.5px solid #e0e0e0; border-radius: 12px; padding: 1.25rem; margin-bottom: 1rem; }
         .input-label { font-size: 11px; color: #888888; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.06em; }
-        textarea { width: 100%; background: #f5f5f5; border: 0.5px solid #dddddd; border-radius: 8px; padding: 12px 14px; font-size: 14px; color: #1a1a1a; resize: vertical; font-family: inherit; min-height: 100px; outline: none; transition: border-color 0.15s; }
-        textarea:focus { border-color: #7F77DD; }
-        .actions { display: flex; gap: 10px; margin-top: 12px; }
+        textarea { width: 100%; background: #f5f5f5; border: 0.5px solid #dddddd; border-radius: 8px; padding: 12px 14px; font-size: 14px; color: #1a1a1a; resize: vertical; font-family: inherit; min-height: 100px; outline: none; }
+        .actions { display: flex; gap: 10px; margin-top: 12px; flex-wrap: wrap; }
         .btn-primary { background: #7F77DD; color: white; border: none; border-radius: 8px; padding: 10px 20px; font-size: 14px; font-weight: 500; cursor: pointer; }
         .btn-primary:disabled { background: #c5c2f0; cursor: not-allowed; }
+        .btn-rag { background: #1D9E75; color: white; border: none; border-radius: 8px; padding: 10px 20px; font-size: 14px; font-weight: 500; cursor: pointer; }
+        .btn-rag:disabled { background: #a8dac9; cursor: not-allowed; }
         .btn-secondary { background: transparent; color: #777777; border: 0.5px solid #dddddd; border-radius: 8px; padding: 10px 20px; font-size: 14px; cursor: pointer; }
         .btn-download { background: #1D9E75; color: white; border: none; border-radius: 8px; padding: 10px 20px; font-size: 14px; font-weight: 500; cursor: pointer; display: none; margin-bottom: 1rem; }
         .loading { display: none; align-items: center; gap: 8px; padding: 12px 0; font-size: 13px; color: #888888; }
@@ -124,10 +119,23 @@ def home():
         .action-workstream { background: #FAEEDA; color: #633806; }
         .action-investigate { background: #E6F1FB; color: #0C447C; }
         .action-log { background: #E1F5EE; color: #085041; }
+        .action-conflict { background: #FF6B6B; color: #FFFFFF; }
         .samples { margin-bottom: 1.5rem; }
         .samples-label { font-size: 11px; color: #888888; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px; }
         .sample-btn { display: inline-block; font-size: 12px; background: #ffffff; color: #7F77DD; padding: 6px 14px; border-radius: 20px; margin: 3px; border: 0.5px solid #7F77DD; cursor: pointer; }
-        .sample-btn:hover { background: #EEEDFE; }
+        .rag-section { margin-top: 1rem; }
+        .rag-card { background: #ffffff; border: 0.5px solid #e0e0e0; border-radius: 12px; overflow: hidden; margin-bottom: 1rem; }
+        .rag-header { padding: 10px 16px; border-bottom: 0.5px solid #eeeeee; background: #fafafa; font-size: 11px; color: #888888; text-transform: uppercase; letter-spacing: 0.06em; display: flex; align-items: center; gap: 6px; }
+        .rag-dot-green { width: 7px; height: 7px; border-radius: 50%; background: #1D9E75; }
+        .rag-dot-purple { width: 7px; height: 7px; border-radius: 50%; background: #7F77DD; }
+        .rag-body { padding: 1rem 1.25rem; }
+        .similar-case { background: #F8FBFF; border: 0.5px solid #E6F1FB; border-radius: 8px; padding: 10px 14px; margin-bottom: 8px; }
+        .similar-case-title { font-size: 13px; font-weight: 500; color: #0C447C; margin-bottom: 4px; }
+        .similar-case-meta { font-size: 11px; color: #888888; }
+        .explanation-text { font-size: 14px; line-height: 1.8; color: #1a1a1a; white-space: pre-wrap; }
+        .conflict-banner { background: #FCEBEB; border: 0.5px solid #A32D2D; border-radius: 8px; padding: 12px 16px; margin-bottom: 1rem; display: none; }
+        .conflict-title { font-size: 13px; font-weight: 600; color: #A32D2D; margin-bottom: 4px; }
+        .conflict-message { font-size: 12px; color: #A32D2D; }
         .upload-zone { border: 2px dashed #7F77DD; border-radius: 12px; padding: 3rem; text-align: center; background: #FAFAFE; cursor: pointer; margin-bottom: 1rem; }
         .upload-zone:hover { background: #EEEDFE; }
         .upload-icon { font-size: 48px; margin-bottom: 12px; }
@@ -138,7 +146,7 @@ def home():
         .batch-title { font-size: 14px; font-weight: 500; color: #1a1a1a; }
         .batch-count { font-size: 12px; color: #888888; }
         .batch-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-        .batch-table th { background: #f5f5f5; padding: 10px 14px; text-align: left; font-size: 11px; font-weight: 500; color: #888888; text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 0.5px solid #eeeeee; }
+        .batch-table th { background: #f5f5f5; padding: 10px 14px; text-align: left; font-size: 11px; font-weight: 500; color: #888888; text-transform: uppercase; border-bottom: 0.5px solid #eeeeee; }
         .batch-table td { padding: 12px 14px; border-bottom: 0.5px solid #f5f5f5; color: #1a1a1a; vertical-align: top; }
         .progress-bar { display: none; margin: 1rem 0; }
         .progress-label { font-size: 13px; color: #888888; margin-bottom: 6px; }
@@ -148,7 +156,7 @@ def home():
         .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
         .section-title { font-size: 11px; font-weight: 500; color: #888888; text-transform: uppercase; letter-spacing: 0.06em; }
         .clear-link { font-size: 12px; color: #c0392b; cursor: pointer; background: none; border: none; }
-        .history-item { background: #ffffff; border: 0.5px solid #eeeeee; border-radius: 10px; padding: 12px 16px; margin-bottom: 8px; cursor: pointer; transition: border-color 0.15s; }
+        .history-item { background: #ffffff; border: 0.5px solid #eeeeee; border-radius: 10px; padding: 12px 16px; margin-bottom: 8px; cursor: pointer; }
         .history-item:hover { border-color: #7F77DD; }
         .h-event { font-size: 13px; color: #666666; margin-bottom: 4px; }
         .h-result { font-size: 12px; color: #7F77DD; font-weight: 500; }
@@ -160,16 +168,16 @@ def home():
 <div class="app">
 
     <div class="topbar">
-        <div class="logo">👑</div>
+        <div class="logo">🏦</div>
         <div><div class="brand"><span>Bharat Upadhyay\'s</span> Remediation AI</div></div>
-        <div class="badge">Powered by Hugging Face</div>
+        <div class="badge">HuggingFace + RAG + LLaMA</div>
     </div>
 
     <div class="stats">
         <div class="stat"><div class="stat-val" id="stat-count">0</div><div class="stat-label">Events classified</div></div>
         <div class="stat"><div class="stat-val" id="stat-remediation">0</div><div class="stat-label">Remediation events</div></div>
         <div class="stat"><div class="stat-val" id="stat-escalate">0</div><div class="stat-label">Escalations raised</div></div>
-        <div class="stat"><div class="stat-val">100%</div><div class="stat-label">Local and private</div></div>
+        <div class="stat"><div class="stat-val" id="stat-conflicts">0</div><div class="stat-label">Conflicts detected</div></div>
     </div>
 
     <div class="tabs">
@@ -178,6 +186,7 @@ def home():
     </div>
 
     <div class="tab-content active" id="tab-single">
+
         <div class="samples">
             <div class="samples-label">Try these events</div>
             <span class="sample-btn" onclick="loadSample(this)">System upgrade caused bonus interest flag to be overridden for all deposit accounts</span>
@@ -189,10 +198,17 @@ def home():
             <div class="input-label">Describe the remediation event</div>
             <textarea id="event" placeholder="e.g. System upgrade caused bonus interest flag to be overridden..."></textarea>
             <div class="actions">
-                <button class="btn-primary" id="classifyBtn" onclick="classifyEvent()">👑 Classify Event</button>
+                <button class="btn-primary" id="classifyBtn" onclick="classifyEvent(false)">⚡ Quick Classify</button>
+                <button class="btn-rag" id="ragBtn" onclick="classifyEvent(true)">🔍 Full Analysis (RAG + LLaMA)</button>
                 <button class="btn-secondary" onclick="clearInput()">Clear</button>
             </div>
-            <div class="loading" id="loading"><div class="spinner"></div>Analysing event...</div>
+            <div class="loading" id="loading"><div class="spinner"></div><span id="loadingText">Classifying...</span></div>
+        </div>
+
+        <div class="conflict-banner" id="conflictBanner">
+            <div class="conflict-title">⚠️ Conflicting Signal Detected</div>
+            <div class="conflict-message" id="conflictMessage"></div>
+            <div class="conflict-message" style="margin-top:4px;font-weight:600;">HUMAN REVIEW REQUIRED before making final decision.</div>
         </div>
 
         <div class="result-card" id="resultCard">
@@ -209,6 +225,17 @@ def home():
             </div>
         </div>
 
+        <div class="rag-section" id="ragSection" style="display:none;">
+            <div class="rag-card">
+                <div class="rag-header"><div class="rag-dot-green"></div>Similar Past Cases from Confluence</div>
+                <div class="rag-body" id="similarCases"></div>
+            </div>
+            <div class="rag-card">
+                <div class="rag-header"><div class="rag-dot-purple"></div>AI Explanation and Recommendations</div>
+                <div class="rag-body"><div class="explanation-text" id="explanation"></div></div>
+            </div>
+        </div>
+
         <div class="history-section">
             <div class="section-header">
                 <div class="section-title">Event history</div>
@@ -216,23 +243,21 @@ def home():
             </div>
             <div id="history"></div>
         </div>
+
     </div>
 
     <div class="tab-content" id="tab-batch">
         <div class="upload-zone" onclick="document.getElementById(\'fileInput\').click()">
             <div class="upload-icon">📊</div>
             <div class="upload-title">Upload your Excel file</div>
-            <div class="upload-subtitle">Click to browse — must have an "Event Description" column</div>
+            <div class="upload-subtitle">Must have an "Event Description" column</div>
             <input type="file" id="fileInput" accept=".xlsx,.xls" style="display:none" onchange="uploadFile(this)">
         </div>
-
         <div class="progress-bar" id="progressBar">
-            <div class="progress-label" id="progressLabel">Processing events...</div>
+            <div class="progress-label" id="progressLabel">Processing...</div>
             <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
         </div>
-
         <button class="btn-download" id="downloadBtn" onclick="downloadResults()">📥 Download Results Excel</button>
-
         <div class="batch-results" id="batchResults">
             <div class="batch-header">
                 <div class="batch-title">Classification Results</div>
@@ -240,16 +265,7 @@ def home():
             </div>
             <div style="overflow-x:auto;">
                 <table class="batch-table">
-                    <thead>
-                        <tr>
-                            <th>Event ID</th>
-                            <th>Event Description</th>
-                            <th>Classification</th>
-                            <th>Product</th>
-                            <th>Severity</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
+                    <thead><tr><th>Event ID</th><th>Event Description</th><th>Classification</th><th>Product</th><th>Severity</th><th>Action</th></tr></thead>
                     <tbody id="batchTableBody"></tbody>
                 </table>
             </div>
@@ -259,9 +275,7 @@ def home():
 </div>
 
 <script>
-    let totalCount = 0;
-    let remediationCount = 0;
-    let escalateCount = 0;
+    let totalCount = 0, remediationCount = 0, escalateCount = 0, conflictCount = 0;
     let historyItems = [];
 
     function switchTab(e, tab) {
@@ -271,17 +285,31 @@ def home():
         document.getElementById("tab-" + tab).classList.add("active");
     }
 
-    async function classifyEvent() {
+    async function classifyEvent(includeRag) {
         const eventText = document.getElementById("event").value.trim();
         if (!eventText) return;
         document.getElementById("classifyBtn").disabled = true;
+        document.getElementById("ragBtn").disabled = true;
         document.getElementById("loading").style.display = "flex";
+        document.getElementById("loadingText").innerText = includeRag
+            ? "Running full analysis — HuggingFace + RAG + LLaMA (30-60 seconds)..."
+            : "Classifying event...";
         document.getElementById("resultCard").style.display = "none";
-        const response = await fetch("/classify", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ event: eventText }) });
+        document.getElementById("ragSection").style.display = "none";
+        document.getElementById("conflictBanner").style.display = "none";
+
+        const response = await fetch("/classify", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ event: eventText, include_rag: includeRag })
+        });
         const data = await response.json();
+
         document.getElementById("classifyBtn").disabled = false;
+        document.getElementById("ragBtn").disabled = false;
         document.getElementById("loading").style.display = "none";
         document.getElementById("resultCard").style.display = "block";
+
         document.getElementById("res-classification").innerText = data.classification;
         document.getElementById("res-classification-score").innerText = data.classification_score + "% confidence";
         document.getElementById("res-product").innerText = data.product;
@@ -289,32 +317,57 @@ def home():
         document.getElementById("res-severity").innerText = data.severity;
         document.getElementById("res-severity-score").innerText = data.severity_score + "% confidence";
         document.getElementById("res-action").innerText = data.action;
+
         const pill = document.getElementById("res-action-pill");
-        pill.innerText = data.action;
         pill.className = "action-pill";
-        if (data.action.includes("ESCALATE")) pill.classList.add("action-escalate");
-        else if (data.action.includes("WORKSTREAM")) pill.classList.add("action-workstream");
-        else if (data.action.includes("ANALYST")) pill.classList.add("action-investigate");
-        else pill.classList.add("action-log");
+        if (data.conflict && data.conflict.conflict) {
+            pill.innerText = "HUMAN REVIEW REQUIRED";
+            pill.classList.add("action-conflict");
+            document.getElementById("conflictBanner").style.display = "block";
+            document.getElementById("conflictMessage").innerText = data.conflict.message;
+            conflictCount++;
+            document.getElementById("stat-conflicts").innerText = conflictCount;
+        } else {
+            pill.innerText = data.action;
+            if (data.action.includes("ESCALATE")) pill.classList.add("action-escalate");
+            else if (data.action.includes("WORKSTREAM")) pill.classList.add("action-workstream");
+            else if (data.action.includes("ANALYST")) pill.classList.add("action-investigate");
+            else pill.classList.add("action-log");
+        }
+
+        if (includeRag && data.similar_cases && data.similar_cases.length > 0) {
+            document.getElementById("ragSection").style.display = "block";
+            document.getElementById("similarCases").innerHTML = data.similar_cases.map(c => `
+                <div class="similar-case">
+                    <div class="similar-case-title">📋 ${c.title}</div>
+                    <div class="similar-case-meta">Category: ${c.category} | Product: ${c.product}</div>
+                </div>`).join("");
+            document.getElementById("explanation").innerText = data.explanation;
+        }
+
         totalCount++;
         document.getElementById("stat-count").innerText = totalCount;
         if (data.classification === "REMEDIATION EVENT") { remediationCount++; document.getElementById("stat-remediation").innerText = remediationCount; }
         if (data.action.includes("ESCALATE")) { escalateCount++; document.getElementById("stat-escalate").innerText = escalateCount; }
-        const now = new Date();
-        historyItems.unshift({ event: eventText, classification: data.classification, action: data.action, time: now.toLocaleTimeString() });
+
+        historyItems.unshift({ event: eventText, classification: data.classification, action: data.action, time: new Date().toLocaleTimeString() });
         renderHistory();
     }
 
-    function loadSample(el) { document.getElementById("event").value = el.innerText; classifyEvent(); }
-    function clearInput() { document.getElementById("event").value = ""; document.getElementById("resultCard").style.display = "none"; }
+    function loadSample(el) { document.getElementById("event").value = el.innerText; }
+    function clearInput() {
+        document.getElementById("event").value = "";
+        document.getElementById("resultCard").style.display = "none";
+        document.getElementById("ragSection").style.display = "none";
+        document.getElementById("conflictBanner").style.display = "none";
+    }
 
     function renderHistory() {
         const container = document.getElementById("history");
-        if (historyItems.length === 0) { container.innerHTML = "<div class=\'no-history\'>No events classified yet.</div>"; return; }
-        container.innerHTML = historyItems.map((item, i) => `<div class="history-item" onclick="loadHistoryItem(${i})"><div class="h-event">📋 ${item.event.substring(0, 80)}...</div><div class="h-result">${item.classification} → ${item.action}</div><div class="h-time">🕐 ${item.time}</div></div>`).join("");
+        if (!historyItems.length) { container.innerHTML = "<div class=\'no-history\'>No events classified yet.</div>"; return; }
+        container.innerHTML = historyItems.map((item, i) => `<div class="history-item" onclick="document.getElementById(\'event\').value=\'${item.event.replace(/'/g,"\\'")}\'"><div class="h-event">📋 ${item.event.substring(0,80)}...</div><div class="h-result">${item.classification} → ${item.action}</div><div class="h-time">🕐 ${item.time}</div></div>`).join("");
     }
 
-    function loadHistoryItem(i) { document.getElementById("event").value = historyItems[i].event; classifyEvent(); }
     function clearHistory() { historyItems = []; renderHistory(); }
 
     async function uploadFile(input) {
@@ -324,7 +377,7 @@ def home():
         formData.append("file", file);
         document.getElementById("progressBar").style.display = "block";
         document.getElementById("progressFill").style.width = "10%";
-        document.getElementById("progressLabel").innerText = "Uploading and classifying all events...";
+        document.getElementById("progressLabel").innerText = "Classifying all events...";
         document.getElementById("batchResults").style.display = "none";
         document.getElementById("downloadBtn").style.display = "none";
         const response = await fetch("/batch_classify", { method: "POST", body: formData });
@@ -332,24 +385,15 @@ def home():
         document.getElementById("progressFill").style.width = "100%";
         document.getElementById("progressLabel").innerText = "Done! " + data.count + " events classified.";
         if (data.error) { alert("Error: " + data.error); return; }
-        renderBatchResults(data.results);
-        totalCount += data.results.length;
-        document.getElementById("stat-count").innerText = totalCount;
-        const remCount = data.results.filter(r => r.classification === "REMEDIATION EVENT").length;
-        const escCount = data.results.filter(r => r.action.includes("ESCALATE")).length;
-        remediationCount += remCount; escalateCount += escCount;
-        document.getElementById("stat-remediation").innerText = remediationCount;
-        document.getElementById("stat-escalate").innerText = escalateCount;
-    }
-
-    function renderBatchResults(results) {
         document.getElementById("batchResults").style.display = "block";
         document.getElementById("downloadBtn").style.display = "block";
-        document.getElementById("batchCount").innerText = results.length + " events classified";
-        document.getElementById("batchTableBody").innerHTML = results.map(r => {
+        document.getElementById("batchCount").innerText = data.results.length + " events classified";
+        document.getElementById("batchTableBody").innerHTML = data.results.map(r => {
             let pc = r.action.includes("ESCALATE") ? "action-escalate" : r.action.includes("WORKSTREAM") ? "action-workstream" : r.action.includes("ANALYST") ? "action-investigate" : "action-log";
-            return `<tr><td style="font-family:monospace;font-size:12px;color:#888">${r.event_id}</td><td style="max-width:280px;font-size:12px">${r.event.substring(0, 80)}...</td><td><span class="mini-pill ${pc}">${r.classification}</span></td><td style="font-size:12px">${r.product}</td><td style="font-size:12px">${r.severity}</td><td><span class="mini-pill ${pc}">${r.action}</span></td></tr>`;
+            return `<tr><td style="font-family:monospace;font-size:12px;color:#888">${r.event_id}</td><td style="max-width:280px;font-size:12px">${r.event.substring(0,80)}...</td><td><span class="mini-pill ${pc}">${r.classification}</span></td><td style="font-size:12px">${r.product}</td><td style="font-size:12px">${r.severity}</td><td><span class="mini-pill ${pc}">${r.action}</span></td></tr>`;
         }).join("");
+        totalCount += data.results.length;
+        document.getElementById("stat-count").innerText = totalCount;
     }
 
     function downloadResults() { window.location.href = "/download_results"; }
@@ -364,7 +408,21 @@ def home():
 def classify():
     data = request.json
     event = data.get("event", "")
+    include_rag = data.get("include_rag", False)
+
     result = classify_single_event(event)
+
+    if include_rag:
+        print(f"\nRunning RAG analysis for: {event[:50]}...")
+        rag_result = full_analysis(event, result)
+        result["similar_cases"] = rag_result["similar_cases"]
+        result["conflict"] = rag_result["conflict"]
+        result["explanation"] = rag_result["explanation"]
+    else:
+        result["similar_cases"] = []
+        result["conflict"] = {"conflict": False}
+        result["explanation"] = ""
+
     return jsonify(result)
 
 
@@ -408,7 +466,7 @@ def batch_classify():
 @app.route("/download_results")
 def download_results():
     results_path = os.path.join(UPLOAD_FOLDER, "classified_results.xlsx")
-    return send_file(results_path, as_attachment=True, download_name="King_of_Remediation_Results.xlsx")
+    return send_file(results_path, as_attachment=True, download_name="Remediation_AI_Results.xlsx")
 
 
 if __name__ == "__main__":
